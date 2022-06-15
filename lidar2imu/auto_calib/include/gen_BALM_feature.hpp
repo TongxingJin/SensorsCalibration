@@ -23,10 +23,10 @@
 
 #include "common/Lidar_parser_base.h"
 
-#define LIDAR_LASER_NUM 64
-#define MAX_POINT_CLOUD_NUM 400000
+#define LIDAR_LASER_NUM 32
+#define MAX_POINT_CLOUD_NUM 70000
 #define SCAN_LINE_CUT 30
-#define INTENSITY_THRESHOLD 35
+#define INTENSITY_THRESHOLD 10 // 35
 
 float cloudCurvature[MAX_POINT_CLOUD_NUM];
 int cloudSortInd[MAX_POINT_CLOUD_NUM];
@@ -61,7 +61,7 @@ bool genPcdFeature(pcl::PointCloud<LidarPointXYZIRT>::Ptr laserCloud,
       std::cerr << "[ERROR] Wrong Ring value " << ring << " \n";
       return false;
     }
-    laser_index[ring].push_back(i);
+    laser_index[ring].push_back(i);// 全局索引
   }
 
   int scan_idx = 0;
@@ -75,8 +75,10 @@ bool genPcdFeature(pcl::PointCloud<LidarPointXYZIRT>::Ptr laserCloud,
     scan_start_index[i] = scan_idx + 5;
     // for(int j = 5; j < cur_point_num - 5; j ++){
     for (int j = 0; j < cur_point_num; j++) {
-      int real_pidx = laser_index[i][j];
+      int real_pidx = laser_index[i][j];// 本行第j个的全局索引，在原始点云中
       int cur_scan_idx = scan_idx + j;
+      // 这个点在按行排列后的全局索引，大行号索引一定更大，同一行取决于扫描顺序
+      // 在原始点云以package形式直接接收，1~32,1~32,...组织的话，这样便于把同一行的放在一起求曲率
       if (j >= 5 && j < cur_point_num - 5) {
         float diffX = laserCloud->points[laser_index[i][j - 5]].x +
                       laserCloud->points[laser_index[i][j - 4]].x +
@@ -117,7 +119,7 @@ bool genPcdFeature(pcl::PointCloud<LidarPointXYZIRT>::Ptr laserCloud,
         cloudNeighborPicked[real_pidx] = 0;
         cloudLabel[real_pidx] = 0;
       }
-      cloudSortInd[cur_scan_idx] = real_pidx;
+      cloudSortInd[cur_scan_idx] = real_pidx;// 按行排序后，cur_scan_idx对应原始点云的real_pidx，这里是为了排序吧
     }
     scan_idx += cur_point_num;
     scan_end_index[i] = scan_idx - 6;

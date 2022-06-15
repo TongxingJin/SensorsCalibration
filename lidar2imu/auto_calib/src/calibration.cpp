@@ -11,6 +11,20 @@
 #include "gen_BALM_feature.hpp"
 #include "logging.hpp"
 
+struct PointXYZIT {
+  float x;
+  float y;
+  float z;
+  unsigned char intensity;
+  float timestamp;
+  EIGEN_MAKE_ALIGNED_OPERATOR_NEW  // make sure our new allocators are aligned
+} EIGEN_ALIGN16;  // enforce SSE padding for correct memory alignment
+
+POINT_CLOUD_REGISTER_POINT_STRUCT(PointXYZIT,
+                                  (float, x, x)(float, y, y)(float, z, z)(
+                                      uint8_t, intensity,
+                                      intensity)(float, timestamp, timestamp))
+
 Calibrator::Calibrator(){
 
 };
@@ -30,26 +44,41 @@ void Calibrator::LoadTimeAndPoes(const std::string &filename,
   }
   // load pose and lidar timestamp(filename)
   std::string line;
-  double max_x, max_y, max_z, min_x, min_y, min_z;
-  max_x = max_y = max_z = -INT_MAX;
-  min_x = min_y = min_z = INT_MAX;
+  // double max_x, max_y, max_z, min_x, min_y, min_z;
+  // max_x = max_y = max_z = -INT_MAX;
+  // min_x = min_y = min_z = INT_MAX;
+  bool initialized = false;
+  Eigen::Affine3d initial_pose;
   while (getline(file, line)) {
     std::stringstream ss(line);
     std::string timeStr;
     ss >> timeStr;
+    if(timeStr == "#") continue;
     // lidarTimes.emplace_back(timeStr);
     lidar_files_.emplace_back(timeStr);
-    Eigen::Matrix4d Ti = Eigen::Matrix4d::Identity();
-    ss >> Ti(0, 0) >> Ti(0, 1) >> Ti(0, 2) >> Ti(0, 3) >> Ti(1, 0) >>
-        Ti(1, 1) >> Ti(1, 2) >> Ti(1, 3) >> Ti(2, 0) >> Ti(2, 1) >> Ti(2, 2) >>
-        Ti(2, 3);
+    // Eigen::Matrix4d Ti = Eigen::Matrix4d::Identity();
+    // ss >> Ti(0, 0) >> Ti(0, 1) >> Ti(0, 2) >> Ti(0, 3) >> Ti(1, 0) >>
+    //     Ti(1, 1) >> Ti(1, 2) >> Ti(1, 3) >> Ti(2, 0) >> Ti(2, 1) >> Ti(2, 2) >>
+    //     Ti(2, 3);
+    double tmp;
+    ss >> tmp;
+    Eigen::Vector3d position;
+    ss >> position.x() >> position.y() >> position.z();
+    Eigen::Quaterniond q;
+    ss >> q.x() >> q.y() >> q.z() >> q.w();
+    Eigen::Affine3d current_pose = Eigen::Affine3d(Eigen::Translation3d(position) * q);
+    if(!initialized){
+      initial_pose = current_pose;
+      initialized = true;
+    }
+    Eigen::Matrix4d Ti = (initial_pose.inverse() * current_pose).matrix();
     Ti *= Tl2i;
-    max_x = std::max(max_x, Ti(0, 3));
-    max_y = std::max(max_y, Ti(1, 3));
-    max_z = std::max(max_z, Ti(2, 3));
-    min_x = std::min(min_x, Ti(0, 3));
-    min_y = std::min(min_y, Ti(1, 3));
-    min_z = std::min(min_z, Ti(2, 3));
+    // max_x = std::max(max_x, Ti(0, 3));
+    // max_y = std::max(max_y, Ti(1, 3));
+    // max_z = std::max(max_z, Ti(2, 3));
+    // min_x = std::min(min_x, Ti(0, 3));
+    // min_y = std::min(min_y, Ti(1, 3));
+    // min_z = std::min(min_z, Ti(2, 3));
     lidarPoses.emplace_back(Ti);
   }
   file.close();
@@ -85,6 +114,9 @@ void Calibrator::Calibration(const std::string lidar_path,
   Eigen::Matrix<double, 6, 1> last_deltaT;
   LoadTimeAndPoes(odom_path, init_Tl2i, lidar_files_, lidar_poses_);
 
+  Eigen::Matrix4d deltaTrans = Eigen::Matrix4d::Identity();
+  SaveStitching(deltaTrans,"before.pcd");
+
   std::vector<int> frm_start_box;
   std::vector<int> frm_step_box;
   std::vector<int> frm_num_box;
@@ -114,12 +146,42 @@ void Calibrator::Calibration(const std::string lidar_path,
       int real_frmIdx = start + frmIdx * step;
       std::string lidar_file_name =
           lidar_path + lidar_files_[real_frmIdx] + ".pcd";
+
       pcl::PointCloud<LidarPointXYZIRT>::Ptr cloud(
           new pcl::PointCloud<LidarPointXYZIRT>);
-      if (pcl::io::loadPCDFile(lidar_file_name, *cloud) < 0) {
+      pcl::PointCloud<PointXYZIT>::Ptr tmp_cloud(new pcl::PointCloud<PointXYZIT>);
+      if (pcl::io::loadPCDFile(lidar_file_name, *tmp_cloud) < 0) {
         std::cout << "cannot open pcd_file: " << lidar_file_name << "\n";
         exit(1);
+      }else{
+        // std::vector<int> line_count(33, 0);
+        cloud->resize(tmp_cloud->size());
+        for(int index = 0; index < tmp_cloud->size(); ++index){
+          const auto& point = tmp_cloud->points[index];
+          LidarPointXYZIRT p;
+          p.x = point.x;
+          p.y = point.y;
+          p.z = point.z;
+          p.intensity = float(point.intensity);
+          p.timestamp = point.timestamp;
+          float dis = sqrt(p.x * p.x + p.y * p.y);
+          float angle = atan2(p.z, dis) / M_PI * 180.0 + 16.5;
+          p.ring = int(angle);
+          cloud->points[index] = p;
+          // if(p.ring >= 0 & p.ring < 32){
+            // line_count[p.ring]++;
+          // }else{
+            // line_count[32]++;
+          // }
+        }
+        cloud->width = tmp_cloud->width;
+        cloud->height = tmp_cloud->height;
+        // for(int index = 0; index < line_count.size(); ++index){
+        //   std::cout << line_count[index] << ", ";
+        // }
+        // std::cout << std::endl;
       }
+
       pcl::PointCloud<pcl::PointXYZI>::Ptr pl_corn(
           new pcl::PointCloud<pcl::PointXYZI>);
       pcl::PointCloud<pcl::PointXYZI>::Ptr pl_surf(
@@ -129,6 +191,7 @@ void Calibrator::Calibration(const std::string lidar_path,
       // generate feature points
       // GenFeature feature;
       genPcdFeature(cloud, pl_surf, pl_surf_sharp, pl_corn);
+      LOG(INFO) << "Feature size: " << pl_surf->size() << ", " << pl_surf_sharp->size();
       Eigen::Matrix4d imu_T = lidar_poses_[real_frmIdx];
       Eigen::Matrix4d refined_T = imu_T * deltaTrans;
       OCTO_TREE::imu_transmat.push_back(imu_T);
@@ -197,41 +260,44 @@ void Calibrator::Calibration(const std::string lidar_path,
             << "s" << std::endl;
   // save refined calib
   std::string refine_calib_file = "./refined_calib_imu_to_lidar.txt";
-  Eigen::Matrix4d deltaTrans = Eigen::Matrix4d::Identity();
-  SaveStitching(deltaTrans,"before.pcd");
+  // Eigen::Matrix4d deltaTrans = Eigen::Matrix4d::Identity();
+  // SaveStitching(deltaTrans,"before.pcd");
   deltaTrans = GetDeltaTrans(deltaRPY, deltaT);
   SaveStitching(deltaTrans,"after.pcd");
   std::cout << "delta T is:" << std::endl;
   std::cout << deltaTrans << std::endl;
   auto refined_Tl2i = init_Tl2i * deltaTrans;
-  auto refined_Ti2l = refined_Tl2i.inverse().eval();
-  std::cout << "refined T(imu 2 lidar): " << std::endl;
-  std::cout << refined_Ti2l << std::endl;
-  std::ofstream fCalib(refine_calib_file);
-  if (!fCalib.is_open()) {
-    std::cerr << "open file " << refine_calib_file << "failed." << std::endl;
-    // return 1;
-  }
+  std::cout << "refined T(lidar 2 imu): " << std::endl;
+  std::cout << refined_Tl2i << std::endl
+  // auto refined_Ti2l = refined_Tl2i.inverse().eval();
+  // std::cout << "refined T(imu 2 lidar): " << std::endl;
+  // std::cout << refined_Ti2l << std::endl;
+;
+  // std::ofstream fCalib(refine_calib_file);
+  // if (!fCalib.is_open()) {
+  //   std::cerr << "open file " << refine_calib_file << "failed." << std::endl;
+  //   // return 1;
+  // }
 
-  fCalib << "refined calib:" << std::endl;
-  fCalib << "R: " << refined_Ti2l(0, 0) << " " << refined_Ti2l(0, 1) << " "
-         << refined_Ti2l(0, 2) << " " << refined_Ti2l(1, 0) << " "
-         << refined_Ti2l(1, 1) << " " << refined_Ti2l(1, 2) << " "
-         << refined_Ti2l(2, 0) << " " << refined_Ti2l(2, 1) << " "
-         << refined_Ti2l(2, 2) << std::endl;
-  fCalib << "t: " << refined_Ti2l(0, 3) << " " << refined_Ti2l(1, 3) << " "
-         << refined_Ti2l(2, 3) << std::endl;
-  fCalib << "deltaTrans:" << std::endl;
-  fCalib << deltaTrans << std::endl;
-  fCalib << "delta roll, pitch, yaw, tx, ty, tz:" << std::endl;
-  fCalib << bestVal[0] << " " << bestVal[1] << " " << bestVal[2] << " "
-         << bestVal[3] << " " << bestVal[4] << " " << bestVal[5] << std::endl;
-  fCalib << "delta roll, pitch, yaw, tx, ty, tz from begin:" << std::endl;
-  fCalib << bestVal[0] + last_deltaT[0] << " " << bestVal[1] + last_deltaT[1]
-         << " " << bestVal[2] + last_deltaT[2] << " "
-         << bestVal[3] + last_deltaT[3] << " " << bestVal[4] + last_deltaT[4]
-         << " " << bestVal[5] + last_deltaT[5] << std::endl;
-  std::cout << "save refined calib to " << refine_calib_file << std::endl;
+  // fCalib << "refined calib:" << std::endl;
+  // fCalib << "R: " << refined_Ti2l(0, 0) << " " << refined_Ti2l(0, 1) << " "
+  //        << refined_Ti2l(0, 2) << " " << refined_Ti2l(1, 0) << " "
+  //        << refined_Ti2l(1, 1) << " " << refined_Ti2l(1, 2) << " "
+  //        << refined_Ti2l(2, 0) << " " << refined_Ti2l(2, 1) << " "
+  //        << refined_Ti2l(2, 2) << std::endl;
+  // fCalib << "t: " << refined_Ti2l(0, 3) << " " << refined_Ti2l(1, 3) << " "
+  //        << refined_Ti2l(2, 3) << std::endl;
+  // fCalib << "deltaTrans:" << std::endl;
+  // fCalib << deltaTrans << std::endl;
+  // fCalib << "delta roll, pitch, yaw, tx, ty, tz:" << std::endl;
+  // fCalib << bestVal[0] << " " << bestVal[1] << " " << bestVal[2] << " "
+  //        << bestVal[3] << " " << bestVal[4] << " " << bestVal[5] << std::endl;
+  // fCalib << "delta roll, pitch, yaw, tx, ty, tz from begin:" << std::endl;
+  // fCalib << bestVal[0] + last_deltaT[0] << " " << bestVal[1] + last_deltaT[1]
+  //        << " " << bestVal[2] + last_deltaT[2] << " "
+  //        << bestVal[3] + last_deltaT[3] << " " << bestVal[4] + last_deltaT[4]
+  //        << " " << bestVal[5] + last_deltaT[5] << std::endl;
+  // std::cout << "save refined calib to " << refine_calib_file << std::endl;
 }
 
 void Calibrator::SaveStitching(const Eigen::Matrix4d transform,
@@ -241,16 +307,31 @@ void Calibrator::SaveStitching(const Eigen::Matrix4d transform,
       new pcl::PointCloud<pcl::PointXYZI>());
   pcl::octree::OctreePointCloudSearch<pcl::PointXYZI>::Ptr all_octree(
       new pcl::octree::OctreePointCloudSearch<pcl::PointXYZI>(0.3));
+  pcl::PointCloud<PointXYZIT>::Ptr tmp_cloud(
+      new pcl::PointCloud<PointXYZIT>());
 
   all_octree->setInputCloud(all_cloud);
   pcl::PointCloud<pcl::PointXYZI>::Ptr cloud(
       new pcl::PointCloud<pcl::PointXYZI>);
   for (size_t i = 0; i < lidar_files_.size(); i++) {
     std::string lidar_file_name = lidar_path_ + lidar_files_[i] + ".pcd";
-    if (pcl::io::loadPCDFile(lidar_file_name, *cloud) < 0) {
+    if (pcl::io::loadPCDFile<PointXYZIT>(lidar_file_name, *tmp_cloud) < 0) {
       LOGW("can not open %s", lidar_file_name);
       return;
     }
+    
+    cloud->resize(tmp_cloud->size());
+    for(int index = 0; index < tmp_cloud->size(); ++index){
+      const auto& point = tmp_cloud->points[index];
+      auto& p= cloud->points[index];
+      p.x = point.x;
+      p.y = point.y;
+      p.z = point.z;
+      p.intensity = point.intensity;
+    }
+    cloud->width = tmp_cloud->width;
+    cloud->height = tmp_cloud->height;
+
     Eigen::Matrix4d T = lidar_poses_[i] * transform;
     for (const auto &src_pt : cloud->points) {
       if (!pcl_isfinite(src_pt.x) || !pcl_isfinite(src_pt.y) ||

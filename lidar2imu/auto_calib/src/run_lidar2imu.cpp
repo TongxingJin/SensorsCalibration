@@ -35,21 +35,28 @@ int main(int argc, char **argv) {
   string extrinsic_json = argv[3];
   string stitching_path = "stitching.pcd";
   // load extrinsic
-  Eigen::Matrix4d json_param;
-  LoadExtrinsic(extrinsic_json, json_param);
-  LOGI("Load extrinsic!");
-  // convert to lidar 2 imu
-  Eigen::Matrix4d lidar2imu_extrinsic = json_param.inverse().eval();
-  std::cout << json_param << std::endl;
-  Eigen::Matrix4d transform = Eigen::Matrix4d::Identity();
-  // Registrator registrator;
-  // registrator.LoadOdometerData(poses_path, lidar2imu);
-  // registrator.LoadLidarPCDs(lidar_pcds_dir);
-  // registrator.RegistrationByGroundPlane(transform);
-  // registrator.RegistrationByVoxelOccupancy(transform);
-  // registrator.SaveStitching(stitching_path);
-  // std::cout << "the calibration result is " << std::endl;
-  // std::cout << transform << std::endl;
+  // Eigen::Matrix4d json_param;
+  // LoadExtrinsic(extrinsic_json, json_param);
+  // LOGI("Load extrinsic!");
+  // // convert to lidar 2 imu
+  // Eigen::Matrix4d lidar2imu_extrinsic = json_param.inverse().eval();
+  // std::cout << json_param << std::endl;
+  // // Eigen::Matrix4d transform = Eigen::Matrix4d::Identity();
+  // // Registrator registrator;
+  // // registrator.LoadOdometerData(poses_path, lidar2imu);
+  // // registrator.LoadLidarPCDs(lidar_pcds_dir);
+  // // registrator.RegistrationByGroundPlane(transform);
+  // // registrator.RegistrationByVoxelOccupancy(transform);
+  // // registrator.SaveStitching(stitching_path);
+  // // std::cout << "the calibration result is " << std::endl;
+  // // std::cout << transform << std::endl;
+
+  Eigen::Matrix4d lidar2imu_extrinsic;
+  LoadExtrinsic(extrinsic_json, lidar2imu_extrinsic);
+  // lidar2imu_extrinsic.setIdentity();
+  // Eigen::AngleAxisd delta(5.0 / 180.0 * M_PI, Eigen::Vector3d::UnitY());
+  // lidar2imu_extrinsic *= Eigen::Affine3d(Eigen::Translation3d::Identity() * Eigen::Quaterniond(delta)).matrix();
+
   Calibrator calibrator;
   calibrator.Calibration(lidar_pcds_dir, poses_path, lidar2imu_extrinsic);
 

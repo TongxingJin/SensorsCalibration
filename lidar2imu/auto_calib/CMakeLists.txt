@@ -11,21 +11,26 @@ find_package(OpenCV REQUIRED)
 link_directories(${OpenCV_LIBRARY_DIRS})
 include_directories(${OpenCV_INCLUDE_DIRS})
 
-add_subdirectory(ceres)
+# add_subdirectory(ceres)
 include_directories(${PROJECT_SOURCE_DIR}/eigen3)
-include_directories(${PROJECT_SOURCE_DIR}/ceres/include)
+# include_directories(${PROJECT_SOURCE_DIR}/ceres/include)
+find_package(Ceres REQUIRED)
+include_directories(${CERES_INCLUDE_DIRS})
 
 include_directories(${EIGEN_ROOT})
 include_directories(${PROJECT_SOURCE_DIR}/include)
 include_directories(${PROJECT_SOURCE_DIR}/src)
 include_directories(${PCL_INCLUDE_DIRS})
 
+find_package(yaml-cpp REQUIRED)
+include_directories(${YAML_CPP_INCLUDE_DIR})
+
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/lib)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/bin)
 
 file(GLOB_RECURSE PARSER_PATH src/*.cpp)
 add_library(${PROJECT_NAME} STATIC ${PARSER_PATH})
-target_link_libraries(${PROJECT_NAME} libjsoncpp.a ${OpenCV_LIBS} ${Boost_SYSTEM_LIBRARY} ceres)
+target_link_libraries(${PROJECT_NAME} libjsoncpp.a ${OpenCV_LIBS} ${Boost_SYSTEM_LIBRARY} ceres ${YAML_CPP_LIBRARIES})
 
 add_executable(run_lidar2imu src/run_lidar2imu.cpp)
 target_link_libraries(run_lidar2imu ${PROJECT_NAME})

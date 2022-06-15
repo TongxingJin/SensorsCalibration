@@ -27,6 +27,7 @@ struct PlaneParam {
   double intercept;
 };
 
+
 class Calibrator {
 public:
   Calibrator();
