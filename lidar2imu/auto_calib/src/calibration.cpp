@@ -188,6 +188,8 @@ void Calibrator::Calibration(const std::string lidar_path,
           new pcl::PointCloud<pcl::PointXYZI>);
       pcl::PointCloud<pcl::PointXYZI>::Ptr pl_surf_sharp(
           new pcl::PointCloud<pcl::PointXYZI>);
+      pcl::PointCloud<pcl::PointXYZI>::Ptr pl_surf_combine(
+          new pcl::PointCloud<pcl::PointXYZI>);
       // generate feature points
       // GenFeature feature;
       genPcdFeature(cloud, pl_surf, pl_surf_sharp, pl_corn);
@@ -195,12 +197,16 @@ void Calibrator::Calibration(const std::string lidar_path,
       Eigen::Matrix4d imu_T = lidar_poses_[real_frmIdx];
       Eigen::Matrix4d refined_T = imu_T * deltaTrans;
       OCTO_TREE::imu_transmat.push_back(imu_T);
-      if (i < turn / 2) {
-        cut_voxel(surf_map, pl_surf_sharp, refined_T, 0, frmIdx,
-                  window_size + 5);
-      } else {
-        cut_voxel(surf_map, pl_surf, refined_T, 0, frmIdx, window_size + 5);
-      }
+      // if (i < turn / 2) {
+      //   cut_voxel(surf_map, pl_surf_sharp, refined_T, 0, frmIdx,
+      //             window_size + 5);
+      // } else {
+      //   cut_voxel(surf_map, pl_surf, refined_T, 0, frmIdx, window_size + 5);
+      // }
+      *pl_surf_combine += *pl_surf_sharp;
+      *pl_surf_combine += *pl_surf;
+      cut_voxel(surf_map, pl_surf_combine, refined_T, 0, frmIdx, window_size + 5);
+
       // if (i > turn / 2)
       //     cut_voxel(corn_map, pl_corn, refined_T, 1, frmIdx, window_size +
       //     5);
@@ -225,13 +231,15 @@ void Calibrator::Calibration(const std::string lidar_path,
       }
     }
     // display
-    // displayVoxelMap(surf_map);
+    displayVoxelMap(surf_map, i);
     // optimize delta R, t1, t2
     if (i < turn / 2) {
       optimizeDeltaTrans(surf_map, corn_map, 4, deltaRPY, deltaT);
     } else {
       optimizeDeltaTrans(surf_map, corn_map, 2, deltaRPY, deltaT);
     }
+    // optimizeDeltaTrans(surf_map, corn_map, 2, deltaRPY, deltaT);
+    
     std::cout << "delta rpy: " << deltaRPY[0] / degree_2_radian << " "
               << deltaRPY[1] / degree_2_radian << " "
               << deltaRPY[2] / degree_2_radian << std::endl;

@@ -216,22 +216,45 @@ void LoadOdometerData(const std::string odometer_file,
                       std::vector<std::string> &timestamp,
                       std::vector<Eigen::Matrix4d> &lidar_poses) {
 
+  // std::ifstream file(odometer_file);
+  // if (!file.is_open()) {
+  //   std::cout << "can not open " << odometer_file << std::endl;
+  //   return;
+  // }
+  // std::string line;
+  // while (getline(file, line)) {
+  //   std::stringstream ss(line);
+  //   std::string timeStr;
+  //   ss >> timeStr;
+  //   timestamp.emplace_back(timeStr);
+  //   Eigen::Matrix4d Ti = Eigen::Matrix4d::Identity();
+  //   ss >> Ti(0, 0) >> Ti(0, 1) >> Ti(0, 2) >> Ti(0, 3) >> Ti(1, 0) >>
+  //       Ti(1, 1) >> Ti(1, 2) >> Ti(1, 3) >> Ti(2, 0) >> Ti(2, 1) >> Ti(2, 2) >>
+  //       Ti(2, 3);
+  //   lidar_poses.emplace_back(Ti);
+  // }
+  // file.close();
+
   std::ifstream file(odometer_file);
   if (!file.is_open()) {
-    std::cout << "can not open " << odometer_file << std::endl;
-    return;
+    std::cout << "ERROR--->>> cannot open: " << odometer_file << std::endl;
+    exit(1);
   }
   std::string line;
   while (getline(file, line)) {
     std::stringstream ss(line);
     std::string timeStr;
     ss >> timeStr;
+    if(timeStr == "#") continue;
     timestamp.emplace_back(timeStr);
-    Eigen::Matrix4d Ti = Eigen::Matrix4d::Identity();
-    ss >> Ti(0, 0) >> Ti(0, 1) >> Ti(0, 2) >> Ti(0, 3) >> Ti(1, 0) >>
-        Ti(1, 1) >> Ti(1, 2) >> Ti(1, 3) >> Ti(2, 0) >> Ti(2, 1) >> Ti(2, 2) >>
-        Ti(2, 3);
-    lidar_poses.emplace_back(Ti);
+    double tmp;
+    ss >> tmp;
+    Eigen::Vector3d position;
+    ss >> position.x() >> position.y() >> position.z();
+    Eigen::Quaterniond q;
+    ss >> q.x() >> q.y() >> q.z() >> q.w();
+    Eigen::Affine3d current_pose = Eigen::Affine3d(Eigen::Translation3d(position) * q);
+    lidar_poses.emplace_back(current_pose.matrix());
   }
   file.close();
 }
@@ -286,8 +309,9 @@ void LoadLidarPCDs(const std::string &pcds_dir,
       }
     } else
       continue;
+    std::cout << "Loaded " << cloud->size() << " points from pcd " << lidar_file_name << std::endl;
 
-    PointCloudDownSampling(cloud, 0.5, filter_cloud);
+    PointCloudDownSampling(cloud, 0.1, filter_cloud);
     PointCloudBbox roi;
     roi.max_x = 20;
     roi.min_x = -20;
@@ -299,8 +323,8 @@ void LoadLidarPCDs(const std::string &pcds_dir,
     pcds.push_back(*filter_cloud_roi);
     lidar_poses.push_back(first_pose.inverse().eval() * lidar_poses_ori[i]);
 
-    printf("\rload: %lu/%lu, %s", i, timestamp.size() - 1,
-           lidar_file_name.c_str());
+    // printf("\rload: %lu/%lu, %s", i, timestamp.size() - 1,
+    //        lidar_file_name.c_str());
   }
 }
 
@@ -356,9 +380,13 @@ int ProcessLidarFrame(const std::vector<pcl::PointCloud<pcl::PointXYZI>> &pcds,
 
     if (diaplay_mode) {
 
-      colorUpdate[ipt * 3 + 0] = static_cast<unsigned char>(0);
-      colorUpdate[ipt * 3 + 1] = static_cast<unsigned char>(0);
-      colorUpdate[ipt * 3 + 2] = static_cast<unsigned char>(255);
+      // colorUpdate[ipt * 3 + 0] = static_cast<unsigned char>(0);
+      // colorUpdate[ipt * 3 + 1] = static_cast<unsigned char>(0);
+      // colorUpdate[ipt * 3 + 2] = static_cast<unsigned char>(255);
+      const auto& rgb = GreyToColorMix(static_cast<unsigned char>(cloudLidar->points[ipt].intensity));
+      colorUpdate[ipt * 3 + 0] = static_cast<unsigned char>(rgb.r);
+      colorUpdate[ipt * 3 + 1] = static_cast<unsigned char>(rgb.g);
+      colorUpdate[ipt * 3 + 2] = static_cast<unsigned char>(rgb.b);
     } else {
       for (int k = 0; k < 3; k++) {
         colorUpdate[ipt * 3 + k] =

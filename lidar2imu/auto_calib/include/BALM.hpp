@@ -471,7 +471,7 @@ void getVoxelMap(OCTO_TREE *root,
   }
 }
 
-void displayVoxelMap(std::unordered_map<VOXEL_LOC, OCTO_TREE *> map) {
+void displayVoxelMap(std::unordered_map<VOXEL_LOC, OCTO_TREE *> map, int ite) {
   pcl::PointCloud<pcl::PointXYZRGB>::Ptr display_pcd(
       new pcl::PointCloud<pcl::PointXYZRGB>);
   srand((unsigned)time(NULL));
@@ -482,7 +482,7 @@ void displayVoxelMap(std::unordered_map<VOXEL_LOC, OCTO_TREE *> map) {
   std::cout << "voxel num: " << voxel_num << std::endl;
   std::cout << "display pcd " << display_pcd->points.size() << std::endl;
   pcl::PCDWriter writer;
-  writer.write("voxel_map.pcd", *display_pcd);
+  writer.write("voxel_map_" + std::to_string(ite) + ".pcd", *display_pcd);
 }
 void getVoxelResidual1(OCTO_TREE *root, ceres::Problem &problem,
                        double *deltaRPY, double *deltaT) {

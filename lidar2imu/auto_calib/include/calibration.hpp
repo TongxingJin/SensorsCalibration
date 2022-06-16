@@ -41,7 +41,7 @@ public:
 
 private:
   int turn_ = 35;
-  int window_ = 10;
+  int window_ = 20;
   std::vector<std::string> lidar_files_;
   std::vector<Eigen::Matrix4d> lidar_poses_;
   // std::vector<pcl::PointCloud<LidarPointXYZIRT>> pcd_seq_;
