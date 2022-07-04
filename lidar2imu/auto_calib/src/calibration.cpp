@@ -67,7 +67,7 @@ void Calibrator::LoadTimeAndPoes(const std::string &filename,
     Eigen::Quaterniond q;
     ss >> q.x() >> q.y() >> q.z() >> q.w();
     std::cout << "Pose " << timeStr << ": " << std::endl;
-    std::cout << position << std::endl;
+    // std::cout << position << std::endl;
     Eigen::Affine3d current_pose = Eigen::Affine3d(Eigen::Translation3d(position) * q);
     if(!initialized){
       initial_pose.setIdentity();
@@ -173,7 +173,7 @@ void Calibrator::Calibration(const std::string lidar_path,
 
       pcl::PointCloud<LidarPointXYZIRT>::Ptr cloud(
           new pcl::PointCloud<LidarPointXYZIRT>);
-      pcl::PointCloud<PointXYZIT>::Ptr tmp_cloud(new pcl::PointCloud<PointXYZIT>);
+      pcl::PointCloud<pcl::PointXYZI>::Ptr tmp_cloud(new pcl::PointCloud<pcl::PointXYZI>);
       if (pcl::io::loadPCDFile(lidar_file_name, *tmp_cloud) < 0) {
         std::cout << "cannot open pcd_file: " << lidar_file_name << "\n";
         exit(1);
@@ -185,8 +185,8 @@ void Calibrator::Calibration(const std::string lidar_path,
         for(int index = 0; index < tmp_cloud->size(); ++index){
           const auto& point = tmp_cloud->points[index];
           LidarPointXYZIRT p;
-          p.timestamp = -point.timestamp;
-          double ratio = p.timestamp / 0.1;
+          // p.timestamp = -point.timestamp;
+          double ratio = (p.intensity - int(p.intensity)) / 0.1;
           if(ratio > 1){
             // std::cout << "Large point timestamp: " << p.timestamp << std::endl;
             ratio = 1.0;
@@ -216,7 +216,7 @@ void Calibrator::Calibration(const std::string lidar_path,
         //   std::cout << line_count[index] << ", ";
         // }
         // std::cout << std::endl;
-        pcl::io::savePCDFileASCII<LidarPointXYZIRT>("/home/jin/Documents/data/calibration/round2/1/pcd_tmp/" + lidar_files_[real_frmIdx] + "_tmp.pcd", *cloud);
+        // pcl::io::savePCDFileASCII<LidarPointXYZIRT>("/home/jin/Documents/data/calibration/round2/1/pcd_tmp/" + lidar_files_[real_frmIdx] + "_tmp.pcd", *cloud);
       }
 
       pcl::PointCloud<pcl::PointXYZI>::Ptr pl_corn(
@@ -353,8 +353,8 @@ void Calibrator::SaveStitching(const Eigen::Matrix4d transform,
       new pcl::PointCloud<pcl::PointXYZI>());
   pcl::octree::OctreePointCloudSearch<pcl::PointXYZI>::Ptr all_octree(
       new pcl::octree::OctreePointCloudSearch<pcl::PointXYZI>(0.3));
-  pcl::PointCloud<PointXYZIT>::Ptr tmp_cloud(
-      new pcl::PointCloud<PointXYZIT>());
+  // pcl::PointCloud<PointXYZIT>::Ptr tmp_cloud(
+  //     new pcl::PointCloud<PointXYZIT>());
 
   all_octree->setInputCloud(all_cloud);
   pcl::PointCloud<pcl::PointXYZI>::Ptr cloud(
@@ -362,22 +362,22 @@ void Calibrator::SaveStitching(const Eigen::Matrix4d transform,
   for (size_t i = 0; i < lidar_files_.size(); i++) {
     std::string lidar_file_name;
     lidar_file_name = lidar_path_ + lidar_files_[i] + ".pcd";
-    if (pcl::io::loadPCDFile<PointXYZIT>(lidar_file_name, *tmp_cloud) < 0) {
+    if (pcl::io::loadPCDFile<pcl::PointXYZI>(lidar_file_name, *cloud) < 0) {
       LOGW("can not open %s", lidar_file_name);
       return;
     }
     
-    cloud->resize(tmp_cloud->size());
-    for(int index = 0; index < tmp_cloud->size(); ++index){
-      const auto& point = tmp_cloud->points[index];
-      auto& p= cloud->points[index];
-      p.x = point.x;
-      p.y = point.y;
-      p.z = point.z;
-      p.intensity = point.intensity;
-    }
-    cloud->width = tmp_cloud->width;
-    cloud->height = tmp_cloud->height;
+    // cloud->resize(tmp_cloud->size());
+    // for(int index = 0; index < tmp_cloud->size(); ++index){
+    //   const auto& point = tmp_cloud->points[index];
+    //   auto& p= cloud->points[index];
+    //   p.x = point.x;
+    //   p.y = point.y;
+    //   p.z = point.z;
+    //   p.intensity = point.intensity;
+    // }
+    // cloud->width = tmp_cloud->width;
+    // cloud->height = tmp_cloud->height;
 
     Eigen::Matrix4d T = lidar_poses_[i] * transform;
     for (const auto &src_pt : cloud->points) {
@@ -409,15 +409,15 @@ void Calibrator::SaveStitchingUndistortion(const Eigen::Matrix4d transform,
       new pcl::PointCloud<pcl::PointXYZI>());
   pcl::octree::OctreePointCloudSearch<pcl::PointXYZI>::Ptr all_octree(
       new pcl::octree::OctreePointCloudSearch<pcl::PointXYZI>(0.3));
-  pcl::PointCloud<PointXYZIT>::Ptr tmp_cloud(
-      new pcl::PointCloud<PointXYZIT>());
+  pcl::PointCloud<pcl::PointXYZI>::Ptr tmp_cloud(
+      new pcl::PointCloud<pcl::PointXYZI>());
 
   all_octree->setInputCloud(all_cloud);
   pcl::PointCloud<pcl::PointXYZI>::Ptr cloud(
       new pcl::PointCloud<pcl::PointXYZI>);
   for (size_t i = 1; i < lidar_files_.size(); i++) {
     std::string lidar_file_name = lidar_path_ + lidar_files_[i] + ".pcd";
-    if (pcl::io::loadPCDFile<PointXYZIT>(lidar_file_name, *tmp_cloud) < 0) {
+    if (pcl::io::loadPCDFile<pcl::PointXYZI>(lidar_file_name, *tmp_cloud) < 0) {
       LOGW("can not open %s", lidar_file_name);
       return;
     }
@@ -438,7 +438,7 @@ void Calibrator::SaveStitchingUndistortion(const Eigen::Matrix4d transform,
       // p.y = point.y;
       // p.z = point.z;
 
-      double ratio = point.timestamp / 0.1;
+      double ratio = (point.intensity - int(point.intensity)) / 0.1;
       if(ratio > 1){
         ratio = 1.0;
       }
