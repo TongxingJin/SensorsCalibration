@@ -304,7 +304,7 @@ public:
       }
 
       // if(layer == 3)
-      if (layer == 5) {
+      if (layer == 5) {// 5
         return;
       }
 
@@ -393,7 +393,7 @@ void clear_tree(OCTO_TREE *root) {
 void cut_voxel(std::unordered_map<VOXEL_LOC, OCTO_TREE *> &feat_map,
                pcl::PointCloud<pcl::PointXYZI>::Ptr pl_feat, Eigen::Matrix4d T,
                int feattype, int fnum, int capacity) {
-  double voxel_size[2] = {1, 1}; // {surf, corn}
+  double voxel_size[2] = {1, 1}; // {surf, corn}//1,1s
   uint plsize = pl_feat->size();
   for (uint i = 0; i < plsize; i++) {
     // Transform point to world coordinate
@@ -537,7 +537,9 @@ void getVoxelResidual2(OCTO_TREE *root, ceres::Problem &problem,
           ceres::CostFunction *cost_function =
               BalmVoxelEnergy2::Create(current_laser_point, point_average,
                                        normal, imu_tran, imu_tran_orig);
+          ceres::LossFunction* loss_function = new ceres::HuberLoss(0.1);                             
           problem.AddResidualBlock(cost_function, nullptr, deltaRPY, deltaT);
+          // problem.AddResidualBlock(cost_function, loss_function, deltaRPY, deltaT);
         }
       }
     }
@@ -570,7 +572,9 @@ void getVoxelResidual2_NOT(OCTO_TREE *root, ceres::Problem &problem,
           ceres::CostFunction *cost_function =
               BalmVoxelEnergy2_NOT::Create(current_laser_point, point_average,
                                            normal, imu_tran, imu_tran_orig);
+          ceres::LossFunction* loss_function = new ceres::HuberLoss(0.1);
           problem.AddResidualBlock(cost_function, nullptr, deltaRPY);
+          // problem.AddResidualBlock(cost_function, loss_function, deltaRPY);
         }
       }
     }
@@ -691,6 +695,7 @@ void optimizeDeltaTrans(std::unordered_map<VOXEL_LOC, OCTO_TREE *> surf_map,
   ceres::Solver::Options options;
   options.linear_solver_type = ceres::DENSE_QR;
   options.minimizer_progress_to_stdout = true;
+  options.max_num_iterations = 10;
   ceres::Solver::Summary summary;
   ceres::Solve(options, &problem, &summary);
   std::cout << summary.BriefReport() << std::endl;

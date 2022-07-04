@@ -58,8 +58,9 @@ bool genPcdFeature(pcl::PointCloud<LidarPointXYZIRT>::Ptr laserCloud,
   for (int i = 0; i < cloud_size; i++) {
     int ring = laserCloud->points[i].ring;
     if (ring < 0 || ring >= LIDAR_LASER_NUM) {
-      std::cerr << "[ERROR] Wrong Ring value " << ring << " \n";
-      return false;
+      // std::cerr << "[ERROR] Wrong Ring value " << ring << " \n";
+      // return false;
+      continue;
     }
     laser_index[ring].push_back(i);// 全局索引
   }
@@ -68,7 +69,7 @@ bool genPcdFeature(pcl::PointCloud<LidarPointXYZIRT>::Ptr laserCloud,
   for (int i = 0; i < LIDAR_LASER_NUM; i++) {
     int cur_point_num = laser_index[i].size();
     if (cur_point_num < 11) {
-      // std::cerr << "[Warning] not enough point on laser scan " << i << ".\n";
+      std::cerr << "[Warning] not enough point on laser scan " << i << ".\n";
       scan_idx += cur_point_num;
       continue;
     }

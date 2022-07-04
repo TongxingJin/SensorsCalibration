@@ -53,6 +53,7 @@ int main(int argc, char **argv) {
 
   Eigen::Matrix4d lidar2imu_extrinsic;
   LoadExtrinsic(extrinsic_json, lidar2imu_extrinsic);
+  // lidar2imu_extrinsic = lidar2imu_extrinsic.inverse().eval();
   // lidar2imu_extrinsic.setIdentity();
   // Eigen::AngleAxisd delta(5.0 / 180.0 * M_PI, Eigen::Vector3d::UnitY());
   // lidar2imu_extrinsic *= Eigen::Affine3d(Eigen::Translation3d::Identity() * Eigen::Quaterniond(delta)).matrix();
