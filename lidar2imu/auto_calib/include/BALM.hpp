@@ -278,7 +278,7 @@ public:
   // Cut root voxel into small pieces
   // frame_head: Position of newest scan in sliding window
   void recut(int layer, uint frame_head,
-             pcl::PointCloud<pcl::PointXYZINormal> &pl_feat_map) {
+             pcl::PointCloud<pcl::PointXYZINormal> &pl_feat_map) {           
     if (octo_state == 0) {
       points_size = 0;
       for (int i = 0; i < OCTO_TREE::voxel_windowsize; i++) {

@@ -56,10 +56,14 @@ bool genPcdFeature(pcl::PointCloud<LidarPointXYZIRT>::Ptr laserCloud,
   std::vector<std::vector<int>> laser_index(LIDAR_LASER_NUM,
                                             std::vector<int>());
   for (int i = 0; i < cloud_size; i++) {
-    int ring = laserCloud->points[i].ring;
+    const auto& point = laserCloud->points[i];
+    int ring = point.ring;
     if (ring < 0 || ring >= LIDAR_LASER_NUM) {
       // std::cerr << "[ERROR] Wrong Ring value " << ring << " \n";
       // return false;
+      continue;
+    }
+    if(Eigen::Vector3d(point.x, point.y, point.z).norm() < 2){
       continue;
     }
     laser_index[ring].push_back(i);// 全局索引

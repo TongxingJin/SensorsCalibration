@@ -93,6 +93,9 @@ private:
   std::vector<std::string> timestamp_;
   std::vector<Eigen::Matrix4d> lidar_poses_;
 
+  // std::vector<double> ins_timestamps_;
+  // std::vector<Eigen::Matrix4d> ins_poses_;
+
   float curr_best_extrinsic_[6] = {0};
   Eigen::Matrix4d lidar2imu_initial_ = Eigen::Matrix4d::Identity();
 

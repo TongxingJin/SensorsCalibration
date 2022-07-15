@@ -10,6 +10,7 @@
 #include "ceres/rotation.h"
 #include "gen_BALM_feature.hpp"
 #include "logging.hpp"
+#include <chrono>
 
 struct PointXYZIT {
   float x;
@@ -25,7 +26,7 @@ POINT_CLOUD_REGISTER_POINT_STRUCT(PointXYZIT,
                                       uint8_t, intensity,
                                       intensity)(float, timestamp, timestamp))
 
-Calibrator::Calibrator(){
+Calibrator::Calibrator(std::string base_path): base_path_(base_path){
 
 };
 
@@ -47,37 +48,40 @@ void Calibrator::LoadTimeAndPoes(const std::string &filename,
   // double max_x, max_y, max_z, min_x, min_y, min_z;
   // max_x = max_y = max_z = -INT_MAX;
   // min_x = min_y = min_z = INT_MAX;
-  bool initialized = false;
-  Eigen::Affine3d initial_pose;
+  // bool initialized = false;
+  // Eigen::Affine3d initial_pose;
   while (getline(file, line)) {
     std::stringstream ss(line);
-    std::string timeStr;
-    ss >> timeStr;
-    if(timeStr == "#") continue;
+    std::string index;
+    ss >> index;
+    if(index == "#") continue;
     // lidarTimes.emplace_back(timeStr);
-    lidar_files_.emplace_back(timeStr);
+    lidar_files_.emplace_back(index);
     // Eigen::Matrix4d Ti = Eigen::Matrix4d::Identity();
     // ss >> Ti(0, 0) >> Ti(0, 1) >> Ti(0, 2) >> Ti(0, 3) >> Ti(1, 0) >>
     //     Ti(1, 1) >> Ti(1, 2) >> Ti(1, 3) >> Ti(2, 0) >> Ti(2, 1) >> Ti(2, 2) >>
     //     Ti(2, 3);
-    double tmp;
-    ss >> tmp;
+    double timestamp;
+    ss >> timestamp;
+    lidar_timestamps_.emplace_back(timestamp);
     Eigen::Vector3d position;
     ss >> position.x() >> position.y() >> position.z();
     Eigen::Quaterniond q;
     ss >> q.x() >> q.y() >> q.z() >> q.w();
-    std::cout << "Pose " << timeStr << ": " << std::endl;
+    // std::cout << "Pose " << index << ": " << std::endl;
     // std::cout << position << std::endl;
     Eigen::Affine3d current_pose = Eigen::Affine3d(Eigen::Translation3d(position) * q);
-    if(!initialized){
-      initial_pose.setIdentity();
-      initial_pose.translation() = current_pose.translation();
-      initialized = true;
+    if(!initialized_){
+      initial_pose_.setIdentity();
+      initial_pose_.translation() = current_pose.translation();
+      std::cout << "init pose: " << position << std::endl;
+      initialized_ = true;
     }
     
     // Eigen::Matrix4d Ti = (initial_pose.inverse() * current_pose).matrix();
     // Ti *= Tl2i;
-    Eigen::Affine3d tmpPose = (initial_pose.inverse() * current_pose) * Eigen::Affine3d(Tl2i); 
+    std::cout << "initial pose: " << initial_pose_.matrix() << std::endl;
+    Eigen::Affine3d tmpPose = (initial_pose_.inverse() * current_pose) * Eigen::Affine3d(Tl2i); 
 
     // max_x = std::max(max_x, Ti(0, 3));
     // max_y = std::max(max_y, Ti(1, 3));
@@ -93,8 +97,51 @@ void Calibrator::LoadTimeAndPoes(const std::string &filename,
       // std::cout << current_pose.matrix() << std::endl;
       // std::cout << Ti.matrix() << std::endl;
     // }
+    std::cout << "lidarPose: " << tmpPose.matrix() << std::endl;
+  }
+  if(lidar_files_.size() != lidar_timestamps_.size()){
+    LOG(FATAL) << "Wrong!";
   }
   std::cout << "Loaded " << lidarPoses.size() << " poses." << std::endl;
+  file.close();
+}
+
+void Calibrator::LoadInsTimeAndPose() {
+  std::ifstream file(base_path_ + "/pcd/sensor_ins_odometry.txt");
+  if (!file.is_open()) {
+    std::cout << "ERROR--->>> cannot open: " << base_path_ + "/pcd/sensor_ins_odometry.txt" << std::endl;
+    exit(1);
+  }
+  std::string line;
+  while (getline(file, line)) {
+    std::stringstream ss(line);
+    std::string index;
+    ss >> index;
+    if(index == "#") continue;
+    double timestamp;
+    ss >> timestamp;
+    ins_timestamps_.emplace_back(timestamp);
+    Eigen::Vector3d position;
+    ss >> position.x() >> position.y() >> position.z();
+    Eigen::Quaterniond q;
+    ss >> q.x() >> q.y() >> q.z() >> q.w();
+    // std::cout << "Pose " << index << ": " << std::endl;
+    // std::cout << position << std::endl;
+    Eigen::Affine3d current_pose = Eigen::Affine3d(Eigen::Translation3d(position) * q);
+    
+    Eigen::Affine3d tmpPose = (initial_pose_.inverse() * current_pose) * Eigen::Affine3d(initial_extrinsic_); 
+
+    high_freq_lidar_poses_.emplace_back(tmpPose.matrix());    
+
+    // if(std::atoi(timeStr.c_str()) % 5 == 0){
+      // std::cout << current_pose.matrix() << std::endl;
+      // std::cout << Ti.matrix() << std::endl;
+    // }
+  }
+  if(ins_timestamps_.size() != high_freq_lidar_poses_.size()){
+    LOG(FATAL) << "Wrong!";
+  }
+  std::cout << "Loaded " << high_freq_lidar_poses_.size() << " poses." << std::endl;
   file.close();
 }
 
@@ -120,6 +167,9 @@ Eigen::Matrix4d Calibrator::GetDeltaTrans(double R[3], double t[3]) {
 void Calibrator::Calibration(const std::string lidar_path,
                              const std::string odom_path,
                              const Eigen::Matrix4d init_Tl2i) {
+  
+  initial_extrinsic_ = Eigen::Affine3d(init_Tl2i);
+  std::cout << "initial extrinsic: " << initial_extrinsic_.matrix() << std::endl;
   lidar_path_ = lidar_path;
   auto time_begin = std::chrono::steady_clock::now();
   int turn = 35;
@@ -127,6 +177,8 @@ void Calibrator::Calibration(const std::string lidar_path,
   //   Eigen::Matrix4d init_Tl2i = Eigen::Matrix4d::Identity();
   Eigen::Matrix<double, 6, 1> last_deltaT;
   LoadTimeAndPoes(odom_path, init_Tl2i, lidar_files_, lidar_poses_);
+  
+  LoadInsTimeAndPose();
 
   Eigen::Matrix4d deltaTrans = Eigen::Matrix4d::Identity();
   SaveStitching(deltaTrans,"before.pcd");
@@ -164,12 +216,11 @@ void Calibrator::Calibration(const std::string lidar_path,
 
       Eigen::Matrix4d imu_T = lidar_poses_[real_frmIdx];
       Eigen::Matrix4d refined_T = imu_T * deltaTrans;
-      Eigen::Matrix4d imu_T_last = lidar_poses_[real_frmIdx - 1];// todo 有效性！
-      Eigen::Matrix4d refined_T_last = imu_T_last * deltaTrans;
-      Eigen::Matrix4d delta_pose = refined_T.inverse() * refined_T_last;
-      // std::cout << "delta_pose: " << delta_pose << std::endl;
-      Eigen::Quaterniond delta_rotation(Eigen::Affine3d(delta_pose).linear());
-      Eigen::Vector3d delta_pose_trans = Eigen::Affine3d(delta_pose).translation().matrix();
+      // Eigen::Matrix4d imu_T_last = lidar_poses_[real_frmIdx - 1];// todo 有效性！
+      // Eigen::Matrix4d refined_T_last = imu_T_last * deltaTrans;
+      // Eigen::Matrix4d delta_pose = refined_T.inverse() * refined_T_last;
+      // Eigen::Quaterniond delta_rotation(Eigen::Affine3d(delta_pose).linear());
+      // Eigen::Vector3d delta_pose_trans = Eigen::Affine3d(delta_pose).translation().matrix();
 
       pcl::PointCloud<LidarPointXYZIRT>::Ptr cloud(
           new pcl::PointCloud<LidarPointXYZIRT>);
@@ -178,44 +229,66 @@ void Calibrator::Calibration(const std::string lidar_path,
         std::cout << "cannot open pcd_file: " << lidar_file_name << "\n";
         exit(1);
       }else{
-        // std::vector<int> line_count(33, 0);
+        std::vector<int> line_count(33, 0);
         // todo distortion, make sure pcd continuity
-        
+        double base_time = lidar_timestamps_[real_frmIdx];
         cloud->resize(tmp_cloud->size());
+        std::chrono::time_point<std::chrono::system_clock> point1 = std::chrono::system_clock::now();
+        // std::cout << "Point size: " << tmp_cloud->size() << std::endl;;        
         for(int index = 0; index < tmp_cloud->size(); ++index){
           const auto& point = tmp_cloud->points[index];
           LidarPointXYZIRT p;
-          // p.timestamp = -point.timestamp;
-          double ratio = (p.intensity - int(p.intensity)) / 0.1;
-          if(ratio > 1){
-            // std::cout << "Large point timestamp: " << p.timestamp << std::endl;
-            ratio = 1.0;
+          double time = base_time - (point.intensity - int(point.intensity));
+          auto pos = std::upper_bound(ins_timestamps_.begin(), ins_timestamps_.end(), time);
+          if(pos == ins_timestamps_.end() || pos == ins_timestamps_.begin()) continue;
+          int id = pos - ins_timestamps_.begin();
+          // std::cout << "pos: " << id << std::endl;
+          double ratio = (time - ins_timestamps_.at(id - 1)) / (ins_timestamps_.at(id) - ins_timestamps_.at(id - 1));
+          if(ratio < 0 || ratio > 1){
+            std::cout << "ratio: " << ratio << std::endl;
+            ratio = 1;
           }
-          Eigen::Quaterniond inter_qua = Eigen::Quaterniond::Identity().slerp(ratio, delta_rotation);
-          Eigen::Vector3d position = inter_qua.matrix() * Eigen::Vector3d(point.x, point.y, point.z) + delta_pose_trans * ratio;
+
+          Eigen::Matrix4d inter_pose = inter(high_freq_lidar_poses_.at(id - 1), high_freq_lidar_poses_.at(id), ratio);
+          inter_pose = (inter_pose * deltaTrans).eval();
+          Eigen::Matrix4d delta_pose = (Eigen::Affine3d(refined_T).inverse() * Eigen::Affine3d(inter_pose)).matrix();
+          Eigen::Vector3d position = delta_pose.topLeftCorner<3, 3>() * Eigen::Vector3d(point.x, point.y, point.z) + delta_pose.topRightCorner<3, 1>();
+
+          // double ratio = (p.intensity - int(p.intensity)) / 0.1;
+          // if(ratio > 1){
+          //   // std::cout << "Large point timestamp: " << p.timestamp << std::endl;
+          //   ratio = 1.0;
+          // }
+          // Eigen::Quaterniond inter_qua = Eigen::Quaterniond::Identity().slerp(ratio, delta_rotation);
+          // Eigen::Vector3d position = inter_qua.matrix() * Eigen::Vector3d(point.x, point.y, point.z) + delta_pose_trans * ratio;
           p.x = position.x();
           p.y = position.y();
           p.z = position.z();
           // p.x = point.x;
           // p.y = point.y;
           // p.z = point.z;
-          p.intensity = float(point.intensity);
+          p.intensity = int(point.intensity);
           float dis = sqrt(p.x * p.x + p.y * p.y);
           float angle = atan2(p.z, dis) / M_PI * 180.0 + 16.5;
           p.ring = int(angle);
           cloud->points[index] = p;
-          // if(p.ring >= 0 & p.ring < 32){
-            // line_count[p.ring]++;
-          // }else{
-            // line_count[32]++;
-          // }
+          if(p.ring >= 0 & p.ring < 32){
+            line_count[p.ring]++;
+          }else{
+            line_count[32]++;
+          }
         }
+        std::chrono::time_point<std::chrono::system_clock> point2 = std::chrono::system_clock::now();
+        double count = std::chrono::duration_cast<std::chrono::milliseconds>(point2 - point1).count();
+
+        std::cout << "time: " << count << std::endl;;
+        
         cloud->width = tmp_cloud->width;
         cloud->height = tmp_cloud->height;
-        // for(int index = 0; index < line_count.size(); ++index){
-        //   std::cout << line_count[index] << ", ";
-        // }
-        // std::cout << std::endl;
+        for(int index = 0; index < line_count.size(); ++index){
+          std::cout << line_count[index] << ", ";
+        }
+        std::cout << std::endl;
         // pcl::io::savePCDFileASCII<LidarPointXYZIRT>("/home/jin/Documents/data/calibration/round2/1/pcd_tmp/" + lidar_files_[real_frmIdx] + "_tmp.pcd", *cloud);
       }
 
@@ -275,7 +348,7 @@ void Calibrator::Calibration(const std::string lidar_path,
     } else {
       optimizeDeltaTrans(surf_map, corn_map, 2, deltaRPY, deltaT);
     }
-    // optimizeDeltaTrans(surf_map, corn_map, 2, deltaRPY, deltaT);
+    // optimizeDeltaTrans(surf_map, corn_map, 4, deltaRPY, deltaT);
     
     std::cout << "delta rpy: " << deltaRPY[0] / degree_2_radian << " "
               << deltaRPY[1] / degree_2_radian << " "
@@ -314,7 +387,9 @@ void Calibrator::Calibration(const std::string lidar_path,
   std::cout << deltaTrans << std::endl;
   auto refined_Tl2i = init_Tl2i * deltaTrans;
   std::cout << "refined T(lidar 2 imu): " << std::endl;
-  std::cout << refined_Tl2i << std::endl
+  std::cout << refined_Tl2i << std::endl;
+  std::cout << "refined quaternion(lidar 2 imu): " << std::endl;
+  std::cout << Eigen::Quaterniond(Eigen::Affine3d(refined_Tl2i).linear()).coeffs() << std::endl;
   // auto refined_Ti2l = refined_Tl2i.inverse().eval();
   // std::cout << "refined T(imu 2 lidar): " << std::endl;
   // std::cout << refined_Ti2l << std::endl;
@@ -366,7 +441,7 @@ void Calibrator::SaveStitching(const Eigen::Matrix4d transform,
       LOGW("can not open %s", lidar_file_name);
       return;
     }
-    
+    std::cout << "Pcd: " << lidar_file_name << std::endl;
     // cloud->resize(tmp_cloud->size());
     // for(int index = 0; index < tmp_cloud->size(); ++index){
     //   const auto& point = tmp_cloud->points[index];
@@ -378,7 +453,8 @@ void Calibrator::SaveStitching(const Eigen::Matrix4d transform,
     // }
     // cloud->width = tmp_cloud->width;
     // cloud->height = tmp_cloud->height;
-
+    // std::cout << "Lidar pose: " << lidar_poses_[i] << std::endl;
+    // std::cout << "trans: " << transform << std::endl;
     Eigen::Matrix4d T = lidar_poses_[i] * transform;
     for (const auto &src_pt : cloud->points) {
       if (!pcl_isfinite(src_pt.x) || !pcl_isfinite(src_pt.y) ||
