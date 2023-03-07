@@ -64,6 +64,19 @@ pcl::PointCloud<pcl::PointXYZI>::Ptr
 pcl::octree::OctreePointCloudSearch<pcl::PointXYZI>::Ptr
     all_octree(new pcl::octree::OctreePointCloudSearch<pcl::PointXYZI>(0.05));
 
+struct PointXYZIT {
+  float x;
+  float y;
+  float z;
+  unsigned char intensity;
+  float timestamp;
+  EIGEN_MAKE_ALIGNED_OPERATOR_NEW  // make sure our new allocators are aligned
+} EIGEN_ALIGN16;  // enforce SSE padding for correct memory alignment
+POINT_CLOUD_REGISTER_POINT_STRUCT(PointXYZIT,
+                                  (float, x, x)(float, y, y)(float, z, z)(
+                                      uint8_t, intensity,
+                                      intensity)(float, timestamp, timestamp))
+
 bool kbhit() {
   termios term;
   tcgetattr(0, &term);
@@ -82,9 +95,9 @@ void CalibrationInit(Eigen::Matrix4d json_param) {
   calibration_matrix_ = json_param;
   orign_calibration_matrix_ = json_param;
   modification_list_.reserve(12);
-  for (int32_t i = 0; i < 12; i++) {
+  for (int32_t i = 0; i < 12; i++) {// 列举了12种可能，i，对应i/2处的正负1,其余位置为0,modification_list_对应12种坐标变换矩阵
     std::vector<int> transform_flag(6, 0);
-    transform_flag[i / 2] = (i % 2) ? (-1) : 1;
+    transform_flag[i / 2] = (i % 2) ? (-1) : 1;//i=0, transform_flag[0]=1// i=1,transform_flag[0]=-1
     Eigen::Matrix4d tmp = Eigen::Matrix4d::Identity();
     Eigen::Matrix3d rot_tmp;
     rot_tmp =
@@ -93,11 +106,11 @@ void CalibrationInit(Eigen::Matrix4d json_param) {
         Eigen::AngleAxisd(transform_flag[1] * cali_scale_degree_ / 180.0 * M_PI,
                           Eigen::Vector3d::UnitY()) *
         Eigen::AngleAxisd(transform_flag[2] * cali_scale_degree_ / 180.0 * M_PI,
-                          Eigen::Vector3d::UnitZ());
+                          Eigen::Vector3d::UnitZ());//000
     tmp.block(0, 0, 3, 3) = rot_tmp;
     tmp(0, 3) = transform_flag[3] * cali_scale_trans_;
     tmp(1, 3) = transform_flag[4] * cali_scale_trans_;
-    tmp(2, 3) = transform_flag[5] * cali_scale_trans_;
+    tmp(2, 3) = transform_flag[5] * cali_scale_trans_;//000
     modification_list_[i] = tmp;
   }
   std::cout << "=>Calibration scale Init!\n";
@@ -251,11 +264,13 @@ void LoadOdometerData(const std::string odometer_file,
     ss >> tmp;
     Eigen::Vector3d position;
     ss >> position.x() >> position.y() >> position.z();
+    // std::cout << std::fixed << std::setprecision(12) << timeStr << ": " << position << std::endl;
     Eigen::Quaterniond q;
     ss >> q.x() >> q.y() >> q.z() >> q.w();
     Eigen::Affine3d current_pose = Eigen::Affine3d(Eigen::Translation3d(position) * q);
     lidar_poses.emplace_back(current_pose.matrix());
   }
+  std::cout << lidar_poses.size() << " poses is loaded..." << std::endl;
   file.close();
 }
 
@@ -296,28 +311,38 @@ void LoadLidarPCDs(const std::string &pcds_dir,
       new pcl::PointCloud<pcl::PointXYZI>);
   pcl::PointCloud<pcl::PointXYZI>::Ptr filter_cloud_roi(
       new pcl::PointCloud<pcl::PointXYZI>);
+  pcl::PointCloud<PointXYZIT>::Ptr cloud_ori(
+      new pcl::PointCloud<PointXYZIT>);
 
   Eigen::Matrix4d first_pose = lidar_poses_ori[0];
   for (size_t i = 0; i < timestamp.size(); ++i) {
-    if (i % 20 != 0)
+    if (i % 5 != 0)
       continue;
-    std::string lidar_file_name = pcds_dir + "/" + timestamp[i] + ".pcd";
+    std::string lidar_file_name = pcds_dir + timestamp[i] + ".pcd";
     if (is_exists(lidar_file_name)) {
-      if (pcl::io::loadPCDFile(lidar_file_name, *cloud) < 0) {
+      cloud_ori->clear();
+      if (pcl::io::loadPCDFile<PointXYZIT>(lidar_file_name, *cloud_ori) < 0) {
         std::cout << "can not open " << lidar_file_name << std::endl;
         continue;
+      }
+      cloud->resize(cloud_ori->size());
+      for(int index = 0; index < cloud_ori->size(); ++index){
+        cloud->points.at(index).x = cloud_ori->points.at(index).x;
+        cloud->points.at(index).y = cloud_ori->points.at(index).y;
+        cloud->points.at(index).z = cloud_ori->points.at(index).z;
+        cloud->points.at(index).intensity = cloud_ori->points.at(index).intensity;
       }
     } else
       continue;
     std::cout << "Loaded " << cloud->size() << " points from pcd " << lidar_file_name << std::endl;
 
-    PointCloudDownSampling(cloud, 0.1, filter_cloud);
+    PointCloudDownSampling(cloud, 0.2, filter_cloud);
     PointCloudBbox roi;
-    roi.max_x = 20;
-    roi.min_x = -20;
-    roi.max_y = 20;
-    roi.min_y = -20;
-    roi.max_z = 5;
+    roi.max_x = 50;
+    roi.min_x = -50;
+    roi.max_y = 50;
+    roi.min_y = -50;
+    roi.max_z = 20;
     roi.min_z = -5;
     PointCloudFilterByROI(filter_cloud, roi, filter_cloud_roi);
     pcds.push_back(*filter_cloud_roi);
@@ -334,7 +359,10 @@ int ProcessLidarFrame(const std::vector<pcl::PointCloud<pcl::PointXYZI>> &pcds,
                       const bool &diaplay_mode) {
   for (size_t i = 0; i < pcds.size(); i++) {
     Eigen::Matrix4d T = lidar_poses[i];
+    // std::cout << "lidar_pose[i]: " << T << std::endl;
+    // std::cout << "calibration_matrix: " << calibration_matrix_ << std::endl;
     T *= calibration_matrix_;
+    // std::cout << "pcd T: " << T << std::endl;
 
     for (const auto &src_pt : pcds[i].points) {
       if (!pcl_isfinite(src_pt.x) || !pcl_isfinite(src_pt.y) ||
@@ -354,6 +382,7 @@ int ProcessLidarFrame(const std::vector<pcl::PointCloud<pcl::PointXYZI>> &pcds,
         all_octree->addPointToCloud(dst_pt, cloudLidar);
       }
     }
+    // std::cout << "cloudLidar size: " << cloudLidar->size() << std::endl;
   }
 
   if (target_vertexBuffer_ != nullptr)
@@ -409,27 +438,31 @@ int ProcessLidarFrame(const std::vector<pcl::PointCloud<pcl::PointXYZI>> &pcds,
 }
 
 int main(int argc, char **argv) {
-  if (argc != 4) {
-    cout << "Usage: ./run_lidar2imu <lidar_pcds_dir> <lidar_pose_file> "
-            "<extrinsic_json> "
-            "\nexample:\n\t"
-            "./bin/run_lidar2imu data/top_center_lidar "
-            "data/top_center_lidar-pose.txt "
-            "data/gnss-to-top_center_lidar-extrinsic.json"
-         << endl;
-    return 0;
-  }
-
-  string lidar_dir = argv[1];
-  string lidar_pose_dir = argv[2];
-  string extrinsic_json = argv[3];
+  // if (argc != 4) {
+  //   cout << "Usage: ./run_lidar2imu <lidar_pcds_dir> <lidar_pose_file> "
+  //           "<extrinsic_json> "
+  //           "\nexample:\n\t"
+  //           "./bin/run_lidar2imu data/top_center_lidar "
+  //           "data/top_center_lidar-pose.txt "
+  //           "data/gnss-to-top_center_lidar-extrinsic.json"
+  //        << endl;
+  //   return 0;
+  // }
+  std::string base_path = argv[1];
+  std::string lidar_dir = base_path + "/pcd/tmp/";
+  std::string lidar_pose_file = base_path + "/ins/ins_interpolation.txt";
+  std::string extrinsic_json = base_path + "/params/velodyne16_back_novatel_extrinsics.yaml";
+  // string lidar_dir = argv[1];
+  // string lidar_pose_dir = argv[2];
+  // string extrinsic_json = argv[3];
   Eigen::Matrix4d json_param;
   LoadExtrinsic(extrinsic_json, json_param);
+  std::cout << "json param: " << json_param << std::endl;
+
   std::vector<std::string> timestamp;
   std::vector<Eigen::Matrix4d> lidar_poses_ori;
   // LoadOdometerData(lidar_pose_dir, json_param, timestamp, lidar_poses_ori);
-  LoadOdometerData(lidar_pose_dir, timestamp, lidar_poses_ori);
-  std::cout << json_param << std::endl;
+  LoadOdometerData(lidar_pose_file, timestamp, lidar_poses_ori);
 
   std::vector<pcl::PointCloud<pcl::PointXYZI>> pcds;
   std::vector<Eigen::Matrix4d> lidar_poses;
@@ -548,6 +581,12 @@ int main(int argc, char **argv) {
     for (int i = 0; i < 12; i++) {
       if (pangolin::Pushed(mat_calib_box[i])) {
         calibration_matrix_ = calibration_matrix_ * modification_list_[i];
+        std::cout << "New calib: " << std::endl;
+        std::cout << calibration_matrix_ << std::endl;
+        Eigen::Affine3d extrinsic(calibration_matrix_);
+        Eigen::Quaterniond q(extrinsic.linear());
+        q.normalize();
+        std::cout << "Quaternion: " << q.w() << " " << q.x() << " " << q.y() << " " << q.z() << std::endl; 
         // ProcessSourceFrame(source_cloud, calibration_matrix_, display_mode_);
         points_size = ProcessLidarFrame(pcds, lidar_poses, calibration_matrix_,
                                         display_mode_);

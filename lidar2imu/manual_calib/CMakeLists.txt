@@ -25,10 +25,14 @@ file(GLOB_RECURSE PARSER_PATH src/*.cpp)
 add_library(${PROJECT_NAME} STATIC ${PARSER_PATH})
 target_link_libraries(${PROJECT_NAME} libjsoncpp.a ${OpenCV_LIBS} ${Boost_SYSTEM_LIBRARY})
 
+find_package(yaml-cpp REQUIRED)
+include_directories(${YAML_CPP_INCLUDE_DIR})
+
 add_executable(run_lidar2imu src/run_lidar2imu.cpp)
 target_link_libraries(run_lidar2imu ${PROJECT_NAME})
 target_link_libraries(run_lidar2imu ${PCL_LIBRARIES})
 target_link_libraries(run_lidar2imu ${Pangolin_LIBRARIES})
+target_link_libraries(run_lidar2imu glog ${YAML_CPP_LIBRARIES})
 
 add_executable(pcd_view_stitcher src/pcd_view_stitcher.cpp)
 target_link_libraries(pcd_view_stitcher ${PROJECT_NAME})
