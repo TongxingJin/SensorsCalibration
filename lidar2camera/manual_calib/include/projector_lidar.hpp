@@ -31,7 +31,7 @@ public:
   cv::Mat oriCloud;
   std::vector<float> intensitys;
   const float ROI[6] = {-4, 3.5, 5.0, 10.0, -2.1, 3.0};
-  int point_size_ = 3;
+  int point_size_ = 1;
   bool intensity_color_ = false;
   bool overlap_filter_ = false;
 
@@ -60,9 +60,9 @@ public:
   void setFilterMode(bool filter_mode) { overlap_filter_ = filter_mode; }
 
   bool loadPointCloud(pcl::PointCloud<pcl::PointXYZI> pcl) {
-    oriCloud = cv::Mat(cv::Size(pcl.points.size(), 3), CV_32FC1);
+    oriCloud = cv::Mat(cv::Size(pcl.points.size(), 3), CV_32FC1);//(width, height)
     for (size_t i = 0; i < pcl.points.size(); ++i) {
-      oriCloud.at<float>(0, i) = pcl.points[i].x;
+      oriCloud.at<float>(0, i) = pcl.points[i].x;//row==0, col==i
       oriCloud.at<float>(1, i) = pcl.points[i].y;
       oriCloud.at<float>(2, i) = pcl.points[i].z;
       intensitys.push_back(pcl.points[i].intensity);
@@ -113,7 +113,7 @@ public:
     cv::remap(img, outImg, mapX, mapY, cv::INTER_LINEAR);
     cv::Mat dist = oriCloud.rowRange(0, 1).mul(oriCloud.rowRange(0, 1)) +
                    oriCloud.rowRange(1, 2).mul(oriCloud.rowRange(1, 2)) +
-                   oriCloud.rowRange(2, 3).mul(oriCloud.rowRange(2, 3));
+                   oriCloud.rowRange(2, 3).mul(oriCloud.rowRange(2, 3));//单独取行，元素相乘，再想加，得到深度平方组成的向量
     cv::Mat R_ = R;
     cv::Mat T_ = T;
 
@@ -140,7 +140,7 @@ public:
         // add size
         if (filter_pts[y2d][x2d] != -1) {
           int32_t p_idx = filter_pts[y2d][x2d];
-          if (z < points[p_idx].z)
+          if (z < points[p_idx].z) //! 保存当前深度更小的这个点
             filter_pts[y2d][x2d] = points.size() - 1;
         } else
           filter_pts[y2d][x2d] = points.size() - 1;
