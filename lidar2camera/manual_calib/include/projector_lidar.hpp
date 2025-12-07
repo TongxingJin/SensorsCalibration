@@ -13,6 +13,12 @@
 #include <string>
 
 #include <vector>
+// #include <opencv2/omnidir.hpp>
+#include <opencv2/calib3d.hpp>
+#include <opencv2/opencv.hpp>
+#include <opencv2/ccalib/omnidir.hpp>
+#include <yaml-cpp/yaml.h>
+
 
 #include "pcl/io/pcd_io.h"
 
@@ -136,7 +142,7 @@ public:
       if (x2d >= 0 && y2d >= 0 && x2d < img.cols && y2d < img.rows && z > 0) {
         maxDist = std::max(maxDist, d);
         maxIntensity = std::max(maxIntensity, intensity);
-        points.push_back(Pt{cv::Point(x2d, y2d), d, z, intensity});
+        points.push_back(Pt{cv::Point(x2d, y2d), d, z, intensity});//! valid points vector
         // add size
         if (filter_pts[y2d][x2d] != -1) {
           int32_t p_idx = filter_pts[y2d][x2d];
@@ -250,6 +256,217 @@ public:
     // cv::Mat img = cv::imread(imgName);
     return ProjectToRawMat(img, K1, D1, R1, T1);
   }
+  
+  cv::Mat ProjectToOmniMat(
+    const cv::Mat &img,
+    const cv::Mat &K,     // fx fy cx cy
+    const cv::Mat &D,     // k1,k2,p1,p2,k3  (可不用，若需要可加入undistort)
+    float xi,             // ⭐ 新增 OMNI 参数
+    const cv::Mat &R,
+    const cv::Mat &T
+  ) {
+
+      int W = img.cols;
+      int H = img.rows;
+
+      // 1) 构造新的 rectified 内参（最关键）
+      float fx_new = 0.5 * W;
+      float fy_new = 0.5 * H;
+
+      cv::Mat K_new = (cv::Mat_<float>(3,3) <<
+          fx_new, 0, W/2,
+          0, fy_new, H/2,
+          0, 0, 1
+      );
+
+      cv::Mat I = cv::Mat::eye(3, 3, CV_32FC1);
+      cv::Mat mapX, mapY;
+
+      // 如果图像本身有畸变，仍可使用 omnidir 去畸变
+      cv::omnidir::initUndistortRectifyMap(
+          K, D, xi, I, K_new,
+          img.size(),
+          CV_32FC1,
+          mapX, mapY,
+          cv::omnidir::RECTIFY_PERSPECTIVE
+      );
+
+      cv::Mat outImg = cv::Mat(img.size(), CV_32FC3);
+      cv::remap(img, outImg, mapX, mapY, cv::INTER_LINEAR);
+      cv::imwrite("/home/jin/ntu/SensorsCalibration/lidar2camera/manual_calib/data/panoramic/1/undistorted.png", outImg);
+
+      // 点云深度平方 dist = X^2 + Y^2 + Z^2
+      cv::Mat dist = oriCloud.rowRange(0,1).mul(oriCloud.rowRange(0,1)) +
+                  oriCloud.rowRange(1,2).mul(oriCloud.rowRange(1,2)) +
+                  oriCloud.rowRange(2,3).mul(oriCloud.rowRange(2,3));
+
+      cv::Mat P = R * oriCloud + cv::repeat(T, 1, oriCloud.cols);
+      cv::Mat Px = P.row(0);
+      cv::Mat Py = P.row(1);
+      cv::Mat Pz = P.row(2);
+
+      float fx = K.at<float>(0,0);
+      float fy = K.at<float>(1,1);
+      float cx = K.at<float>(0,2);
+      float cy = K.at<float>(1,2);
+
+      float maxDist = 0;
+      float maxIntensity = 0;
+
+      std::vector<Pt> points;
+      std::vector<std::vector<int>> filter_pts(img.rows,
+                                              std::vector<int>(img.cols, -1));
+
+      // for (int i = 0; i < oriCloud.cols; ++i) {
+
+      //     float X = Px.at<float>(0,i);
+      //     float Y = Py.at<float>(0,i);
+      //     float Z = Pz.at<float>(0,i);
+      //     if (Z <= 0) continue;  // only project points in front of camera
+
+      //     float norm = std::sqrt(X*X + Y*Y + Z*Z);
+
+      //     // ⭐ Omnidirectional projection
+      //     float d = Z + xi * norm;
+      //     if (d < 1e-6) continue;  // avoid bad projection
+
+      //     float x = X / d;
+      //     float y = Y / d;
+
+      //     int u = cvRound(fx * x + cx);
+      //     int v = cvRound(fy * y + cy);
+
+      //     float depth = std::sqrt(dist.at<float>(0,i));
+      //     float intensity = intensitys[i];
+
+      //     if (u >= 0 && v >= 0 && u < img.cols && v < img.rows) {
+      //         maxDist = std::max(maxDist, depth);
+      //         maxIntensity = std::max(maxIntensity, intensity);
+
+      //         points.push_back(Pt{cv::Point(u,v), depth, Z, intensity});
+
+      //         if (filter_pts[v][u] != -1) {
+      //             int prev = filter_pts[v][u];
+      //             if (Z < points[prev].z)
+      //                 filter_pts[v][u] = points.size() - 1;
+      //         } else {
+      //             filter_pts[v][u] = points.size() - 1;
+      //         }
+      //     }
+      // }
+      cv::Mat projCloud2d = K_new * (R * oriCloud + repeat(T, 1, oriCloud.cols));
+      for (int32_t i = 0; i < projCloud2d.cols; ++i) {
+        float x = projCloud2d.at<float>(0, i);
+        float y = projCloud2d.at<float>(1, i);
+        float z = projCloud2d.at<float>(2, i);
+        int x2d = cvRound(x / z);
+        int y2d = cvRound(y / z);
+        float d = sqrt(dist.at<float>(0, i));
+        float intensity = intensitys[i];
+  
+        if (x2d >= 0 && y2d >= 0 && x2d < img.cols && y2d < img.rows && z > 0) {
+          maxDist = std::max(maxDist, d);
+          maxIntensity = std::max(maxIntensity, intensity);
+          points.push_back(Pt{cv::Point(x2d, y2d), d, z, intensity});//! valid points vector
+          // add size
+          if (filter_pts[y2d][x2d] != -1) {
+            int32_t p_idx = filter_pts[y2d][x2d];
+            if (z < points[p_idx].z) //! 保存当前深度更小的这个点
+              filter_pts[y2d][x2d] = points.size() - 1;
+          } else
+            filter_pts[y2d][x2d] = points.size() - 1;
+        }
+      }
+
+      // 以下部分保持原来的 overlap 与绘制流程不变
+      if (overlap_filter_) {
+          std::vector<int> filtered;
+
+          for (int m = 0; m < img.rows; m++) {
+              for (int n = 0; n < img.cols; n++) {
+                  int idx = filter_pts[m][n];
+                  if (idx == -1) continue;
+
+                  bool front = true;
+
+                  for (int j = std::max(0, m - OVERLAP_FILTER_WINDOW);
+                      j < std::min(img.rows, m + OVERLAP_FILTER_WINDOW + 1); j++) {
+                      for (int k = std::max(0, n - OVERLAP_FILTER_WINDOW);
+                          k < std::min(img.cols, n + OVERLAP_FILTER_WINDOW + 1); k++) {
+
+                          if (filter_pts[j][k] == -1) continue;
+
+                          int p2 = filter_pts[j][k];
+                          if (points[idx].z - points[p2].z > OVERLAP_DEPTH_TH) {
+                              front = false; break;
+                          }
+                      }
+                  }
+                  if (front) filtered.push_back(idx);
+              }
+          }
+
+          for (int idx : filtered) {
+              cv::Scalar color = intensity_color_
+                              ? fakeColor(points[idx].intensity / maxIntensity)
+                              : fakeColor(points[idx].dist / maxDist);
+              circle(outImg, points[idx].point, point_size_, color, -1);
+          }
+      } else {
+          std::sort(points.begin(), points.end(),
+                  [](const Pt &a, const Pt &b) { return a.dist > b.dist; });
+          for (auto &p : points) {
+              cv::Scalar color = intensity_color_
+                              ? fakeColor(p.intensity / maxIntensity)
+                              : fakeColor(p.dist / maxDist);
+              circle(outImg, p.point, point_size_, color, -1);
+          }
+      }
+
+      return outImg;
+  }
+
+  cv::Mat ProjectToOmniImage(cv::Mat img, Eigen::Matrix3d K,
+    std::vector<double> D, double xi, Eigen::Matrix4d json_param) {
+    cv::Mat K1, D1, R1, T1;
+    float k[9], d[8], r[9], t[3];
+
+    k[0] = K(0, 0);
+    k[1] = K(0, 1);
+    k[2] = K(0, 2);
+    k[3] = K(1, 0);
+    k[4] = K(1, 1);
+    k[5] = K(1, 2);
+    k[6] = K(2, 0);
+    k[7] = K(2, 1);
+    k[8] = K(2, 2);
+
+    for (size_t i = 0; i < D.size(); i++) {
+      d[i] = D[i];
+    }
+
+    r[0] = json_param(0, 0);
+    r[1] = json_param(0, 1);
+    r[2] = json_param(0, 2);
+    r[3] = json_param(1, 0);
+    r[4] = json_param(1, 1);
+    r[5] = json_param(1, 2);
+    r[6] = json_param(2, 0);
+    r[7] = json_param(2, 1);
+    r[8] = json_param(2, 2);
+
+    t[0] = json_param(0, 3);
+    t[1] = json_param(1, 3);
+    t[2] = json_param(2, 3);
+
+    K1 = cv::Mat(3, 3, CV_32FC1, k);
+    D1 = cv::Mat(D.size(), 1, CV_32FC1, d);
+    R1 = cv::Mat(3, 3, CV_32FC1, r);
+    T1 = cv::Mat(3, 1, CV_32FC1, t);
+    // cv::Mat img = cv::imread(imgName);
+    return ProjectToOmniMat(img, K1, D1, xi, R1, T1);
+  }
+
 
   cv::Mat ProjectToFisheyeMat(cv::Mat img, cv::Mat K, cv::Mat D, cv::Mat R,
                               cv::Mat T) {

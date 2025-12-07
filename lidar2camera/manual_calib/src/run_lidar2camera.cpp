@@ -196,24 +196,115 @@ bool ManualCalibration(int key_input) {
   return real_hit;
 }
 
+bool LoadOmniCameraParameters(
+  const std::string& yaml_file,
+  int cam_id,                           // 0,1,2,3
+  double& xi,                           // output
+  Eigen::Matrix3d& K,                   // output
+  std::vector<double>& dist_coeffs,     // output
+  Eigen::Matrix4d& T_cam_base           // output (cam_i wrt base)
+) {
+  YAML::Node config = YAML::LoadFile(yaml_file);
+  
+  // --- cam0 parameters (base transformation reference) ---
+  YAML::Node cam0_node = config["cam0"];
+  if (!cam0_node) {
+      std::cerr << "cam0 not found in yaml\n";
+      return false;
+  }
+
+  // Read T_cam0_imu (base reference)
+  Eigen::Matrix4d T_cam0_imu = Eigen::Matrix4d::Identity();
+  {
+      auto Tnode = cam0_node["T_cam_imu"];
+      for (int r = 0; r < 4; r++) {
+          for (int c = 0; c < 4; c++) {
+              T_cam0_imu(r, c) = Tnode[r][c].as<double>();
+          }
+      }
+  }
+
+  // --- read target camera (cam_id) ---
+  std::string key = "cam" + std::to_string(cam_id);
+  YAML::Node cam_node = config[key];
+  if (!cam_node) {
+      std::cerr << key << " not found in yaml\n";
+      return false;
+  }
+
+  // 1. Read intrinsics
+  auto intr = cam_node["intrinsics"];
+  if (!intr || intr.size() != 5) {
+      std::cerr << "intrinsics must be 5 numbers: [xi, fx, fy, cx, cy]\n";
+      return false;
+  }
+
+  xi = intr[0].as<double>();
+  double fx = intr[1].as<double>();
+  double fy = intr[2].as<double>();
+  double cx = intr[3].as<double>();
+  double cy = intr[4].as<double>();
+
+  // Build K
+  K = Eigen::Matrix3d::Zero();
+  K(0,0) = fx;
+  K(1,1) = fy;
+  K(0,2) = cx;
+  K(1,2) = cy;
+  K(2,2) = 1.0;
+
+  // 2. distortion coefficients
+  dist_coeffs.clear();
+  if (cam_node["distortion_coeffs"]) {
+      for (size_t i = 0; i < cam_node["distortion_coeffs"].size(); i++) {
+          dist_coeffs.push_back(cam_node["distortion_coeffs"][i].as<double>());
+      }
+  }
+
+  // 3. Read T_cam_i_imu
+  Eigen::Matrix4d T_cami_cam0 = Eigen::Matrix4d::Identity();
+  {
+      auto Tnode = cam_node["T_cam_imu"];
+      for (int r = 0; r < 4; r++) {
+          for (int c = 0; c < 4; c++) {
+              T_cami_cam0(r, c) = Tnode[r][c].as<double>();
+          }
+      }
+  }
+
+  // 4. Convert to T_cam_base
+  // base = imu, or camera0, depending on your convention
+  // You said: camera0 is relative to base, other cameras should be "left multiply with this matrix"
+  // So final output = T_cam0_base * T_cami_imu
+  // Since cam0 is relative to base, T_cam0_base = T_cam0_imu
+  // cam_i relative to base = T_cam0_imu.inverse() * T_cami_imu
+
+  if (cam_id == 0) {
+      T_cam_base = T_cam0_imu;    // cam0 wrt base
+  } else {
+      T_cam_base = T_cam0_imu * T_cami_cam0;
+  }
+
+  return true;
+}
+
 int main(int argc, char **argv) {
-  if (argc != 5) {
+  if (argc != 4) {
     cout << "Usage: ./run_lidar2camera <image_path> <pcd_path> "
-            "<intrinsic_json> <extrinsic_json>"
+            "<parameters_yaml>"
             "\nexample:\n\t"
             "./bin/run_lidar2camera data/0.png data/0.pcd "
-            "data/center_camera-intrinsic.json "
-            "data/top_center_lidar-to-center_camera-extrinsic.json"
+            "data/abc.yaml "
          << endl;
     return 0;
   }
 
   string camera_path = argv[1];
   string lidar_path = argv[2];
-  string intrinsic_json = argv[3];
-  string extrinsic_json = argv[4];
+  string params_yaml = argv[3];
+  // string extrinsic_json = argv[4];
   cv::Mat img = cv::imread(camera_path);
-  std::cout << intrinsic_json << std::endl;
+  std::cout << params_yaml << std::endl;
   pcl::PointCloud<pcl::PointXYZI>::Ptr cloud(
       new pcl::PointCloud<pcl::PointXYZI>);
   if (pcl::io::loadPCDFile<pcl::PointXYZI>(lidar_path, *cloud) == -1) {
@@ -224,13 +315,17 @@ int main(int argc, char **argv) {
   // load intrinsic
   Eigen::Matrix3d K;
   std::vector<double> dist;
-  LoadIntrinsic(intrinsic_json, K, dist);
+  double xi;
+  Eigen::Matrix4d json_param;
+
+  LoadOmniCameraParameters(params_yaml, 0, xi, K, dist, json_param);
+  // LoadIntrinsic(intrinsic_json, K, dist);
   for (size_t i = 0; i < dist.size(); i++) {
     distortions_.push_back(dist[i]);
   }
 
   intrinsic_matrix_ = K;
-  orign_intrinsic_matrix_ = intrinsic_matrix_;
+  orign_intrinsic_matrix_ = intrinsic_matrix_;//! initial value for intrinsics
   std::cout << "intrinsic:\n"
             << K(0, 0) << " " << K(0, 1) << " " << K(0, 2) << "\n"
             << K(1, 0) << " " << K(1, 1) << " " << K(1, 2) << "\n"
@@ -238,8 +333,8 @@ int main(int argc, char **argv) {
   std::cout << "dist:\n" << dist[0] << " " << dist[1] << "\n";
 
   // load extrinsic
-  Eigen::Matrix4d json_param;
-  LoadExtrinsic(extrinsic_json, json_param);
+  // Eigen::Matrix4d json_param;
+  // LoadExtrinsic(extrinsic_js on,json_param);
 
   cout << "Loading data completed!" << endl;
   CalibrationInit(json_param);
@@ -322,8 +417,8 @@ int main(int argc, char **argv) {
   mat_calib_box.push_back(addZtrans);
   mat_calib_box.push_back(minusZtrans);
 
-  cv::Mat current_frame = projector.ProjectToRawImage(
-      img, intrinsic_matrix_, dist, calibration_matrix_);
+  cv::Mat current_frame = projector.ProjectToOmniImage(
+      img, intrinsic_matrix_, dist, xi, calibration_matrix_);//! calibration_matrix_ is the revolved extrinsics
   int frame_num = 0;
 
   std::cout << "\n=>START\n";
@@ -332,15 +427,15 @@ int main(int argc, char **argv) {
     if (displayMode) {
       if (display_mode_ == false) {
         projector.setDisplayMode(true);
-        current_frame = projector.ProjectToRawImage(img, intrinsic_matrix_,
-                                                    dist, calibration_matrix_);
+        current_frame = projector.ProjectToOmniImage(img, intrinsic_matrix_,
+                                                    dist, xi, calibration_matrix_);
         display_mode_ = true;
       }
     } else {
       if (display_mode_ == true) {
         projector.setDisplayMode(false);
-        current_frame = projector.ProjectToRawImage(img, intrinsic_matrix_,
-                                                    dist, calibration_matrix_);
+        current_frame = projector.ProjectToOmniImage(img, intrinsic_matrix_,
+                                                    dist, xi, calibration_matrix_);
         display_mode_ = false;
       }
     }
@@ -348,15 +443,15 @@ int main(int argc, char **argv) {
     if (filterMode) {
       if (filter_mode_ == false) {
         projector.setFilterMode(true);
-        current_frame = projector.ProjectToRawImage(img, intrinsic_matrix_,
-                                                    dist, calibration_matrix_);
+        current_frame = projector.ProjectToOmniImage(img, intrinsic_matrix_,
+                                                    dist, xi, calibration_matrix_);
         filter_mode_ = true;
       }
     } else {
       if (filter_mode_ == true) {
         projector.setFilterMode(false);
-        current_frame = projector.ProjectToRawImage(img, intrinsic_matrix_,
-                                                    dist, calibration_matrix_);
+        current_frame = projector.ProjectToOmniImage(img, intrinsic_matrix_,
+                                                    dist, xi, calibration_matrix_);
         filter_mode_ = false;
       }
     }
@@ -381,7 +476,7 @@ int main(int argc, char **argv) {
     if (pointSize.GuiChanged()) {
       int ptsize = pointSize.Get();
       projector.setPointSize(ptsize);
-      current_frame = projector.ProjectToRawImage(img, intrinsic_matrix_, dist,
+      current_frame = projector.ProjectToOmniImage(img, intrinsic_matrix_, dist, xi,
                                                   calibration_matrix_);
       std::cout << "point size changed to " << ptsize << std::endl;
     }
@@ -389,32 +484,32 @@ int main(int argc, char **argv) {
       if (pangolin::Pushed(mat_calib_box[i])) {
         calibration_matrix_ = calibration_matrix_ * modification_list_[i];
         std::cout << "Changed!\n";
-        current_frame = projector.ProjectToRawImage(img, intrinsic_matrix_,
-                                                    dist, calibration_matrix_);
+        current_frame = projector.ProjectToOmniImage(img, intrinsic_matrix_,
+                                                    dist, xi, calibration_matrix_);
       }
     }
 
     if (pangolin::Pushed(addFx)) {
       intrinsic_matrix_(0, 0) *= cali_scale_fxfy_;
-      current_frame = projector.ProjectToRawImage(img, intrinsic_matrix_, dist,
+      current_frame = projector.ProjectToOmniImage(img, intrinsic_matrix_, dist, xi,
                                                   calibration_matrix_);
       std::cout << "fx changed to " << intrinsic_matrix_(0, 0) << std::endl;
     }
     if (pangolin::Pushed(minusFx)) {
       intrinsic_matrix_(0, 0) /= cali_scale_fxfy_;
-      current_frame = projector.ProjectToRawImage(img, intrinsic_matrix_, dist,
+      current_frame = projector.ProjectToOmniImage(img, intrinsic_matrix_, dist, xi,
                                                   calibration_matrix_);
       std::cout << "fx changed to " << intrinsic_matrix_(0, 0) << std::endl;
     }
     if (pangolin::Pushed(addFy)) {
       intrinsic_matrix_(1, 1) *= cali_scale_fxfy_;
-      current_frame = projector.ProjectToRawImage(img, intrinsic_matrix_, dist,
+      current_frame = projector.ProjectToOmniImage(img, intrinsic_matrix_, dist, xi,
                                                   calibration_matrix_);
       std::cout << "fy changed to " << intrinsic_matrix_(1, 1) << std::endl;
     }
     if (pangolin::Pushed(minusFy)) {
       intrinsic_matrix_(1, 1) /= cali_scale_fxfy_;
-      current_frame = projector.ProjectToRawImage(img, intrinsic_matrix_, dist,
+      current_frame = projector.ProjectToOmniImage(img, intrinsic_matrix_, dist, xi,
                                                   calibration_matrix_);
       std::cout << "fy changed to " << intrinsic_matrix_(1, 1) << std::endl;
     }
@@ -422,7 +517,7 @@ int main(int argc, char **argv) {
     if (pangolin::Pushed(resetButton)) {
       calibration_matrix_ = orign_calibration_matrix_;
       intrinsic_matrix_ = orign_intrinsic_matrix_;
-      current_frame = projector.ProjectToRawImage(img, intrinsic_matrix_, dist,
+      current_frame = projector.ProjectToOmniImage(img, intrinsic_matrix_, dist, xi,
                                                   calibration_matrix_);
       std::cout << "Reset!\n";
     }
@@ -440,7 +535,7 @@ int main(int argc, char **argv) {
         Eigen::Matrix4d transform = calibration_matrix_;
         cout << "\nTransfromation Matrix:\n" << transform << std::endl;
       }
-      current_frame = projector.ProjectToRawImage(img, intrinsic_matrix_, dist,
+      current_frame = projector.ProjectToOmniImage(img, intrinsic_matrix_, dist, xi,
                                                   calibration_matrix_);
     }
 
